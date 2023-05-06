@@ -107,6 +107,7 @@ int ParsingCommand(char* command, char** countW, int* index) {
             printf("An array for part of the command didn't allocate");
             exit(EXIT_FAILURE);
         }
+        removeQuotes(argument); // remove double quotes from the argument
         strcpy(countW[*index], argument);
         (*index)++;
         argument = strtok(NULL, " ");
@@ -248,3 +249,36 @@ void RunCommand(char ** countW) {
         }
     }
 }
+
+void EditPipeCommand(char* command) {
+    char* src = command;
+    char* dst = command;
+    char* pipe = "|";
+    int quote = 0;
+
+    while (*src != '\0') {
+        if (*src == '"' && quote == 0) {
+            quote = 1;
+        } else if (*src == '"' && quote == 1) {
+            quote = 0;
+        }
+
+        if (quote == 0 && *src == ' ' && (*(src + 1) == '|' || *(src - 1) == '|')) {
+            // do nothing to the space
+        } else if (quote == 0 && *src == ' ' && *(src - 1) != '|') {
+            // skip the space
+        } else if (quote == 0 && *src == '|' && *(src + 1) == ' ') {
+            // skip the space after the pipe
+        } else if (quote == 0 && *src == '|' && *(src - 1) == ' ') {
+            // skip the space before the pipe
+        } else {
+            // copy the character
+            *dst++ = *src;
+        }
+
+        src++;
+    }
+
+    *dst = '\0';
+}
+
