@@ -1,5 +1,5 @@
 //ex2.c mini shell with pipes
-//Name: Yahya Saad ID: 322944869
+//Name: Yahya Saad 
 //-------------------------------some include for usage------------------------------
 #include <stdlib.h>
 
@@ -18,7 +18,7 @@
 pid_t pid;
 #define MAX 510
 #define MAX_ARGS 10
-// this method is for the prompt line
+//this method is for the prompt line
 void DisplayPrompt(int command_counter, int args_count);
 //remove double quotes
 void removeQuotes(char * str);
@@ -48,6 +48,7 @@ int main() {
     signal(SIGTSTP, handle_signal);
     signal(SIGINT, SIG_IGN); // ignore SIGINT (Ctrl+C)
     while (1) {
+        signal(SIGTSTP, handle_signal); // install signal handler before executing child process
         int countArgs = 0; // reset the count of arguments for each command
         DisplayPrompt(command_counter, totArgs); // print the prompt line with the number of arguments
         fgets(command, MAX, stdin); // receives a command
@@ -302,11 +303,12 @@ void RunInBackground(char **args) {
 }
 
 void handle_signal(int sig) {
-    if (sig == SIGTSTP) { // handle Ctrl+Z
-        if (pid != 0) { // check if a child process is running
-            kill(pid, SIGTSTP); // send SIGTSTP to the child process
-            printf("\nProcess %d stopped.\n", pid);
-            pid = 0; // reset the pid variable to indicate that no child process is running
+    if (sig == SIGTSTP) {
+        printf("\n");
+        printf("[%d]+ Stopped\n", pid);//simulate a real terminal ctrl z
+        if (pid > 0) { // if there's a running process
+            kill(pid, SIGINT); // send a SIGINT signal to the child process
+            pid = 0; // reset the child process ID
         }
     }
 }
