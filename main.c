@@ -9,11 +9,11 @@
 
 #include <sys/wait.h>
 
-#include <sys/types.h>
-
 #include <pwd.h>
 
 #include <string.h>
+
+#include <fcntl.h>
 //-------------------------------some methods and globals parameters\macros------------------------------
 pid_t pid;
 #define MAX 510
@@ -24,17 +24,29 @@ void DisplayPrompt(int command_counter, int args_count);
 void removeQuotes(char * str);
 //tokenizes the command string into individual words
 int ParsingCommand(char * command, char ** countW, int * index);
-//execute the command if it's already exist in the operating system 
+//execute the command if it's already exist in the operating system
 void RunCommand(char ** countW);
+//allows running a command in the background using the & symbol
+void RunInBackground(char **args);
+// signal handler function
+void handle_signal(int sig);
+//remove the spaces around the pipe | symbol
+//void RemoveSpacesFromPipeCommand(char* str);
+//creates a child process and redirects the output to the specified file
+void RedirectOutput(char **args);
 //-------------------------------main program------------------------------
 int main() {
     //command counter to print it later
     //commands length for testing usage only
-    int command_counter = 0, commands_length = 0;
+    int command_counter = 0;
+    unsigned long commands_length = 0;
     char command[MAX];
     char ** commandArr; //main array to store the parsed output
     int empty_lines = 0; // number of consecutive empty lines
     int totArgs = 0;
+    // set up signal handlers
+    signal(SIGTSTP, handle_signal);
+    signal(SIGINT, SIG_IGN); // ignore SIGINT (Ctrl+C)
     while (1) {
         int countArgs = 0; // reset the count of arguments for each command
         DisplayPrompt(command_counter, totArgs); // print the prompt line with the number of arguments
@@ -76,6 +88,9 @@ int main() {
 
             if (strcmp(commandArr[0], "cd") == 0) {
                 printf("command not supported\n");
+            } else if (strcmp(commandArr[0], "bg") == 0) { // handle bg command
+                RunInBackground(commandArr);
+                countArgs += index;
             } else { //if it needs to run the command
                 RunCommand(commandArr);
                 countArgs += index; // add the number of arguments to the total count of arguments
@@ -95,7 +110,7 @@ int main() {
 //-------------------------------Helpful functions------------------------------
 int ParsingCommand(char* command, char** countW, int* index) {
     char* argument = strtok(command, " ");
-    int arg_size;
+    unsigned long arg_size;
     while (argument != NULL) {
         if (*index >= MAX_ARGS) {
             printf("Too many arguments.\n");
@@ -108,15 +123,10 @@ int ParsingCommand(char* command, char** countW, int* index) {
             exit(EXIT_FAILURE);
         }
         removeQuotes(argument); // remove double quotes from the argument
+//        RemoveSpacesFromPipeCommand(argument); // remove spaces around the pipe symbol
         strcpy(countW[*index], argument);
         (*index)++;
         argument = strtok(NULL, " ");
-        if (argument != NULL && strcmp(argument, "|") == 0) {
-            // if the next token is a pipe, store it as a separate argument
-            countW[*index] = "|";
-            (*index)++;
-            argument = strtok(NULL, " ");
-        }
     }
     countW[*index] = NULL;
     free(argument);
@@ -142,7 +152,7 @@ void removeQuotes(char * str) {
     * dst = '\0';
 }
 
-void RunCommand(char ** countW) {
+void RunCommand(char **countW) {
     int num_pipes = 0;
     int index = 0;
     while (countW[index] != NULL) {
@@ -166,7 +176,12 @@ void RunCommand(char ** countW) {
     int status;
 
     while (countW[curr_command] != NULL) {
-        if (strcmp(countW[curr_command], "|") == 0) {
+        if (strcmp(countW[curr_command], "&") == 0) {
+            countW[curr_command] = NULL;
+            RunInBackground(countW + curr_command_start);
+            curr_command_start = curr_command + 1;
+        }
+        else if (strcmp(countW[curr_command], "|") == 0) {
             countW[curr_command] = NULL;
 
             if (pipe(pipe_fds + 2 * curr_pipe) == -1) {
@@ -223,6 +238,10 @@ void RunCommand(char ** countW) {
                 exit(EXIT_FAILURE);
             }
         }
+        else if (countW[1] != NULL && strcmp(countW[1], ">") == 0) { // handle output redirection
+            RedirectOutput(countW);
+            exit(EXIT_SUCCESS);
+        }
 
         for (int i = 0; i < 2 * num_pipes; i++) {
             if (close(pipe_fds[i]) == -1) {
@@ -250,35 +269,74 @@ void RunCommand(char ** countW) {
     }
 }
 
-void EditPipeCommand(char* command) {
-    char* src = command;
-    char* dst = command;
-    char* pipe = "|";
-    int quote = 0;
-
-    while (*src != '\0') {
-        if (*src == '"' && quote == 0) {
-            quote = 1;
-        } else if (*src == '"' && quote == 1) {
-            quote = 0;
-        }
-
-        if (quote == 0 && *src == ' ' && (*(src + 1) == '|' || *(src - 1) == '|')) {
-            // do nothing to the space
-        } else if (quote == 0 && *src == ' ' && *(src - 1) != '|') {
-            // skip the space
-        } else if (quote == 0 && *src == '|' && *(src + 1) == ' ') {
-            // skip the space after the pipe
-        } else if (quote == 0 && *src == '|' && *(src - 1) == ' ') {
-            // skip the space before the pipe
-        } else {
-            // copy the character
-            *dst++ = *src;
-        }
-
-        src++;
+//void RemoveSpacesFromPipeCommand(char* str) {
+//    char* src = str;
+//    char* dst = str;
+//    while (*src) {
+//        if (*src == '|') {
+//            *dst++ = '|';
+//            if (*(src+1) == ' ') {
+//                src++;
+//            }
+//        }
+//        *dst++ = *src++;
+//    }
+//    *dst = 0;
+//}
+void RunInBackground(char **args) {
+    pid_t pxd = fork();
+    if (pxd == -1) {
+        perror("fork");
+        exit(EXIT_FAILURE);
     }
-
-    *dst = '\0';
+    else if (pxd == 0) { // child process
+        setpgid(0, 0); // put the child process in a new process group
+        if (execvp(args[0], args) == -1) {
+            perror("execvp");
+            exit(EXIT_FAILURE);
+        }
+    }
+    else { // parent process
+        printf("[%d] %s\n", pxd, args[0]);
+    }
 }
 
+void handle_signal(int sig) {
+    if (sig == SIGTSTP) { // handle Ctrl+Z
+        if (pid != 0) { // check if a child process is running
+            kill(pid, SIGTSTP); // send SIGTSTP to the child process
+            printf("\nProcess %d stopped.\n", pid);
+            pid = 0; // reset the pid variable to indicate that no child process is running
+        }
+    }
+}
+
+void RedirectOutput(char **args) {
+    pid_t prd;
+    int fd;
+    char *output_file = args[2];
+    args[1] = NULL;
+    args[2] = NULL;
+
+    prd = fork();
+    if (prd == -1) {
+        perror("Failed to fork");
+        exit(EXIT_FAILURE);
+    } else if (prd == 0) { // child process
+        fd = open(output_file, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+        if (fd == -1) {
+            perror("Failed to open file");
+            exit(EXIT_FAILURE);
+        }
+        if (dup2(fd, STDOUT_FILENO) == -1) { // duplicate the file descriptor
+            perror("Failed to redirect output");
+            exit(EXIT_FAILURE);
+        }
+        close(fd);
+        execvp(args[0], args); // execute the command
+        perror(args[0]);
+        exit(EXIT_FAILURE);
+    } else { // parent process
+        wait(NULL);
+    }
+}
